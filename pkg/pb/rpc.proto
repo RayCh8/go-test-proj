@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+option go_package = "github.com/AmazingTalker/go-amazing/pkg/pb";
+
+package pb;
+
+import "third_party/google/api/annotations.proto";
+import "third_party/gogoproto/gogo.proto";
+import "third_party/amazingtalker/atproto.proto";
+
+import "google/protobuf/timestamp.proto";
+
+service GoAmazing {
+    // Health check api for k8s.
+    rpc Health(HealthReq) returns (HealthRes) {
+        option (google.api.http) = {
+            get: "/health"
+        };
+    }
+
+    rpc Config(ConfigReq) returns (ConfigRes) {
+        option (google.api.http) = {
+            get: "/config"
+        };
+    }
+
+    rpc CreateRecord(CreateRecordReq) returns (CreateRecordRes) {
+    option (google.api.http) = {
+            post: "/api/record"
+            body: "record"
+        };
+    }
+
+    rpc GetRecord(GetRecordReq) returns (GetRecordRes) {
+        option (google.api.http) = {
+            get: "/api/records/:id"
+            body: "record"
+        };
+    }
+
+    rpc ListRecord(ListRecordReq) returns (ListRecordRes) {
+        option (google.api.http) = {
+            get: "/api/records"
+            body: "records"
+        };
+    }
+}
+
+message Record {
+    string id = 1 [(gogoproto.customname) = "ID"];
+    int64 the_num = 2 [(gogoproto.customname) = "TheNum", (gogoproto.jsontag) = "theNum"];
+    string the_str = 3 [(gogoproto.customname) = "TheStr", (gogoproto.jsontag) = "theStr"];
+    google.protobuf.Timestamp created_at = 4 [(gogoproto.stdtime) = true, (gogoproto.customname) = "CreatedAt", (gogoproto.wktpointer) = true, (gogoproto.jsontag) = "createdAt"];
+    google.protobuf.Timestamp updated_at = 5 [(gogoproto.stdtime) = true, (gogoproto.customname) = "UpdatedAt", (gogoproto.wktpointer) = true, (gogoproto.jsontag) = "updatedAt"];
+}
+
+message HealthReq { }
+
+message HealthRes {
+    bool ok = 1;
+}
+
+message ConfigReq { }
+
+message ConfigRes {
+    bool enable = 1;
+    int64 num = 2;
+    string str = 3;
+}
+
+message CreateRecordReq {
+    int64 the_num = 1 [(gogoproto.customname) = "TheNum", (gogoproto.jsontag) = "theNum"];
+    string the_str = 2 [(gogoproto.customname) = "TheStr", (gogoproto.jsontag) = "theStr"];
+    google.protobuf.Timestamp created_at = 3 [(gogoproto.stdtime) = true, (gogoproto.customname) = "CreatedAt", (gogoproto.wktpointer) = true, (gogoproto.jsontag) = "createdAt"];
+}
+
+message CreateRecordRes {
+    option (atproto.success_http_status) = "201";
+    Record record = 1  [(gogoproto.customname) = "Record"];
+}
+
+message GetRecordReq {
+    string id = 1 [(gogoproto.customname) = "ID", (gogoproto.jsontag) = "id", (atproto.frparams) = "true"];
+}
+
+message GetRecordRes {
+    option (atproto.success_http_status) = "200";
+    Record record = 1  [(gogoproto.customname) = "Record"];
+}
+
+message ListRecordReq {
+    // keys from url queryString or url params is always type of string.
+    string size = 1 [(gogoproto.customname) = "PageSize", (gogoproto.jsontag) = "size", (atproto.frquery) = "true", (gogoproto.moretags)='validate:"required"'];
+    string page = 2 [(gogoproto.customname) = "Page", (gogoproto.jsontag) = "page", (atproto.frquery) = "true", (gogoproto.moretags)='validate:"required"'];
+}
+
+message ListRecordRes {
+    option (atproto.success_http_status) = "200";
+    repeated Record records = 1  [(gogoproto.customname) = "Records"];
+}

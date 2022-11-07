@@ -1,0 +1,35 @@
+name: "PR Test Process"
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  run_test_and_push_image:
+    runs-on: "lightweight"
+    env:
+      AT_SSH_PRIVATE_KEY_PATH: ".ssh/id_rsa"
+    steps:
+      - name: Checkout go-amazing repository
+        uses: actions/checkout@v2
+
+      - name: Checkout ci tools repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/amazingtalker-ci-tools
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+          path: ./.github/actions
+
+      - name: Setup Go environment
+        uses: ./.github/actions/go/go-setup-env
+        with:
+          aws_access_key: ${{ secrets.SRE_ROBOT_AWS_ACCESS_KEY }}
+          aws_secret_key: ${{ secrets.SRE_ROBOT_AWS_SECRET_KEY }}
+          aws_assume_role_arn: ${{ secrets.SRE_ROBOT_AWS_ASSUME_ROLE_ARN }}
+          aws_region: "ap-northeast-1"
+          deploy_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Test the build
+        id: go_test_build_and_push_image
+        uses: ./.github/actions/go/go-test-build

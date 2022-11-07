@@ -1,0 +1,147 @@
+version: '3.4'
+
+x-env-run: &env-run
+  CI_BUILD: $CI_BUILD
+  ENV_NAMESPACE: development # options: production, staging, development
+  ENV_PROJECT_NAME: go-amazing
+  ENV_SERVICE_NAME: go-amazing-rpc
+  METRIC_API_KEY: <new-relic-insights-insert-key> # TODO: needs to be encrypted in the future
+  METRIC_REFLESH_SECONDS: 1
+  LOGGER_LEVEL: debug
+  LOGGER_DEVELOPMENT: "true"
+  LOGGER_AIRBRAKE_PROJECT_ID: 0
+  MYSQL_DSN: root:root@tcp(mysql:3306)/go-amazing?charset=utf8mb4&parseTime=True
+  REDIS_ADDRS: server1:redis:6379 # support multiple addresses by the delimiter `,` eg: server1:redis:6379,server2:redis:6380
+  LOCAL_CACHE_SIZE: 1048576 # = 1024*1024
+  MONITOR_PERIOD_SECONDS: 5
+  ETCD_ADDRS: etcd:2379 # support multiple addresses by the delimiter `,` eg: addr1:2379,addr2:2379
+  ETCD_DIAL_TIMEOUT_SECONDS: 5
+
+x-env: &env
+  <<: *env-run
+  MIGRATION_DIR: /src/database/migrations
+  STATIC_FILES: /src/database
+  SCRIPT_FILES: /src/script
+  CGO_ENABLED: 0
+  GOPATH: /go
+  GOCACHE: /src/.dockerbuild/gocache
+  GONOPROXY: github.com/AmazingTalker/*
+  GOPRIVATE: github.com/AmazingTalker/*
+  GONOSUMDB: github.com/AmazingTalker/*
+  SSH_PRIVATE_KEY:
+
+x-base: &base
+  image: andrewchen20/protoc_golang:v1.0.12-at-golang-1.16
+  working_dir: /src
+  volumes:
+    - .:/src
+    - ${LOCAL_GOPATH}/pkg/mod/cache:/go/pkg/mod/cache
+  environment: *env
+
+services:
+  mysql:
+    image: mysql:5.7
+    command:
+      [
+          "--sql_mode=",
+          "--max_allowed_packet=64M",
+          "--default-authentication-plugin=mysql_native_password",
+      ]
+    ports:
+      - 3306:3306
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./database/initdb:/docker-entrypoint-initdb.d
+    environment:
+      MYSQL_ROOT_PASSWORD: "root"
+    healthcheck:
+      test: "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD || exit 1"
+      interval: 1s
+      timeout: 10s
+      retries: 5
+  
+  redis:
+    image: redis:5.0.12-alpine
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: "redis-cli ping || exit 1"
+      interval: 1s
+      timeout: 3s
+      retries: 5
+  
+  etcd:
+    image: bitnami/etcd:3.5.2
+    ports:
+      - 2379:2379
+    volumes:
+      - etcd-data:/bitnami/etcd
+    environment:
+      ALLOW_NONE_AUTHENTICATION: "yes"
+    healthcheck:
+      test: "etcdctl --endpoints=localhost:2379 version || exit 1"
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  codegen:
+    <<: *base
+    command: ["make", "codegen"]
+
+  build:
+    <<: *base
+    command: ["make", "build"]
+
+  ci-build:
+    <<: *base
+    command: ["make", "ci-build"]
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+
+  test:
+    <<: *base
+    command: ["make", "test"]
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+
+  go-amazing-rpc:
+    image: go-amazing-rpc:latest
+    build:
+      context: .
+      target: rpc
+    environment: *env-run
+    ports:
+      - 8080:8080
+      - 8081:8081
+    volumes:
+      - $AT_CONFIG_REPO:/configs
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+    networks:
+      - proxy
+      - default
+    command: ["/script/wait-for", "mysql:3306", "--timeout=15", "--", "/rpc"]
+
+  go-amazing-cron:
+    image: go-amazing-cron:latest
+    build:
+      context: .
+      target: cron
+    environment: *env-run
+
+networks:
+  default:
+    name: go-amazing
+  proxy:
+    external: true
+    name: rails
+
+volumes:
+  db-data:
+  etcd-data:

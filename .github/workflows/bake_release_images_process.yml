@@ -1,0 +1,148 @@
+name: "Bake Release Images Process"
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  prepare_version_tag:
+    runs-on: "lightweight"
+    steps:
+      - uses: actions/checkout@v2
+      - name: Checkout github-action-release-tag-generator repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/github-action-release-tag-generator
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+          path: ./.github/actions/github-action-release-tag-generator
+
+      - name: Create tag if necessary
+        id: daily-version
+        uses: ./.github/actions/github-action-release-tag-generator
+        with:
+          prefix: release-v
+    outputs: # Shares the action’s outputs to the Next jobs
+      created: ${{ steps.daily-version.outputs.created }}
+      version: ${{ steps.daily-version.outputs.version }}
+
+  run_test_and_push_image:
+    runs-on: "lightweight"
+    env:
+      AT_SSH_PRIVATE_KEY_PATH: ".ssh/id_rsa"
+    needs: prepare_version_tag
+    outputs:
+      image_tag: ${{ steps.go_test_build_and_push_image.outputs.image_tag }}
+    steps:
+      - name: Checkout at-tracking repository
+        uses: actions/checkout@v2
+
+      - name: Checkout ci tools repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/amazingtalker-ci-tools
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+          path: ./.github/actions
+
+      - name: Setup Go environment
+        uses: ./.github/actions/go/go-setup-env
+        with:
+          aws_access_key: ${{ secrets.SRE_ROBOT_AWS_ACCESS_KEY }}
+          aws_secret_key: ${{ secrets.SRE_ROBOT_AWS_SECRET_KEY }}
+          aws_assume_role_arn: ${{ secrets.SRE_ROBOT_AWS_ASSUME_ROLE_ARN }}
+          aws_region: "ap-northeast-1"
+          deploy_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Test, build and push image
+        id: go_test_build_and_push_image
+        uses: ./.github/actions/go/go-test-build-and-push-image
+        with:
+          aws_ecr_registry_url: "769647069563.dkr.ecr.ap-northeast-1.amazonaws.com"
+          aws_region: "ap-northeast-1"
+          env: "staging"
+          image_names: "go-amazing-rpc,go-amazing-cron"
+          gh_access_token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+          release_tag: "${{ needs.prepare_version_tag.outputs.version }}"
+          commit_id: ${{ github.sha }}
+          slack_bot_user_oauth_access_token: ${{ secrets.SLACK_BOT_USER_OAUTH_ACCESS_TOKEN }}
+
+  update_helm_chart_v1:
+    runs-on: "mgmt-v2"
+    needs: [prepare_version_tag, run_test_and_push_image]
+    steps:
+      - name: Checkout ops micro service configs repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/ops-micro-service-configs
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_RAILS_CI }}
+
+      - name: Update helm chart in ops_micro_service_configs
+        uses: ./.github/actions/update_main_image_to_helm_chart
+        with:
+          runner_env: "mgmt-v2"
+          env: "staging"
+          services: "go-amazing-rpc,go-amazing-cron"
+          image_tag: ${{ needs.run_test_and_push_image.outputs.image_tag }}
+          committer: ${{ github.actor }}
+          enable_synchook: "false"
+          gh_access_token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+          slack_bot_user_oauth_access_token: ${{ secrets.SLACK_BOT_USER_OAUTH_ACCESS_TOKEN }}
+
+      - name: Force sync up with ArgoCD
+        uses: ./.github/actions/sync_up_argocd
+        with:
+          env: "staging"
+          services: "go-amazing-rpc,go-amazing-cron"
+          image_tag: ${{ needs.run_test_and_push_image.outputs.image_tag }}
+          committer: ${{ github.actor }}
+          argocd_admin_password: ${{ secrets.ARGOCD_ADMIN_PASSWD }}
+
+  update_helm_chart_v2:
+    runs-on: "mgmt-v2"
+    needs: [run_test_and_push_image, update_helm_chart_v1]
+    steps:
+      - name: Checkout ops micro service configs repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/ops-micro-service-configs
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+
+      - name: Checkout ci tools repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/amazingtalker-ci-tools
+          ref: main
+          token: ${{ secrets.GH_ACCESS_TOKEN }}
+          path: ./_composite-actions
+
+      - name: update Helm Chart value file for rpc
+        uses: ./_composite-actions/common/update-helm-chart-value-file-v2
+        if: success()
+        with:
+          env: "staging"
+          update_target: "main"
+          service: "go-amazing-rpc"
+          image_tag: ${{ needs.run_test_and_push_image.outputs.image_tag }}
+          committer: ${{ github.actor }}
+          enable_synchook: false
+          github_access_token: ${{ secrets.GH_ACCESS_TOKEN }}
+          argocd_access_token: ${{ secrets.ARGOCD_V2_ACCESS_TOKEN }}
+          git_branch: main
+
+      - name: update Helm Chart value file for cron
+        uses: ./_composite-actions/common/update-helm-chart-value-file-v2
+        if: success()
+        with:
+          env: "staging"
+          update_target: "main"
+          service: "go-amazing-cron"
+          image_tag: ${{ needs.run_test_and_push_image.outputs.image_tag }}
+          committer: ${{ github.actor }}
+          enable_synchook: false
+          github_access_token: ${{ secrets.GH_ACCESS_TOKEN }}
+          argocd_access_token: ${{ secrets.ARGOCD_V2_ACCESS_TOKEN }}
+          git_branch: main

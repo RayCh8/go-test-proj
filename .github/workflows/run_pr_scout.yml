@@ -1,0 +1,22 @@
+name: "PR Scout"
+on:
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  check_pr_ref_asana:
+    name: Asana Ticket Reference
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout github-action-pr-desc-checker repository
+        uses: actions/checkout@v2
+        with:
+          repository: AmazingTalker/github-action-pr-desc-checker
+          ref: main
+          token: ${{ secrets.GH_IT_TOKEN_GOLANG_CI }}
+
+      - name: check pr discription
+        uses: ./
+        with:
+          github-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          bodyContains: "asana.com"
